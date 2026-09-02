@@ -1,0 +1,207 @@
+/* main.kill - test cascading termination of user processes */
+
+#include <xinu.h>
+
+#define NNODES	15
+#define USTACK	4096
+#define UPRIO	20
+
+/* Node numbers used to construct the test tree. */
+#define NODE_A	0
+#define NODE_B	1
+#define NODE_C	2
+#define NODE_D	3
+#define NODE_E	4
+#define NODE_F	5
+#define NODE_G	6
+#define NODE_H	7
+#define NODE_I	8
+#define NODE_J	9
+#define NODE_K	10
+#define NODE_L	11
+#define NODE_M	12
+#define NODE_N	13
+#define NODE_O	14
+
+local sid32	created;		/* Counts processes that reached barrier */
+local sid32	hold;			/* Keeps user processes alive for tests */
+local pid32	nodepid[NNODES];
+
+local process usernode(uint32 node);
+local pid32 spawnuser(uint32 node, char *name);
+local void createchildren(uint32 node);
+local void printproctree(char *label);
+
+/*------------------------------------------------------------------------
+ * spawnuser - create, mark, and start one user process
+ *------------------------------------------------------------------------
+ */
+local pid32 spawnuser(uint32 node, char *name)
+{
+	pid32 pid;
+
+	pid = create((void *)usernode, USTACK, UPRIO, name, 1, node);
+	if (pid == SYSERR) {
+		panic("main.kill: create failed");
+		return SYSERR;
+	}
+
+	/* create() defaults this field to FALSE; this is test user code. */
+	proctab[pid].user_process = TRUE;
+	resume(pid);
+	return pid;
+}
+
+/*------------------------------------------------------------------------
+ * createchildren - construct the fixed 15-node user process tree
+ *
+ * A
+ * |- B
+ * |  |- E - K
+ * |  `- F - L
+ * |- C
+ * |  |- G - M
+ * |  `- H - N
+ * `- D
+ *    |- I - O
+ *    `- J
+ *------------------------------------------------------------------------
+ */
+local void createchildren(uint32 node)
+{
+	switch (node) {
+	case NODE_A:
+		spawnuser(NODE_B, "user-B");
+		spawnuser(NODE_C, "user-C");
+		spawnuser(NODE_D, "user-D");
+		break;
+
+	case NODE_B:
+		spawnuser(NODE_E, "user-E");
+		spawnuser(NODE_F, "user-F");
+		break;
+
+	case NODE_C:
+		spawnuser(NODE_G, "user-G");
+		spawnuser(NODE_H, "user-H");
+		break;
+
+	case NODE_D:
+		spawnuser(NODE_I, "user-I");
+		spawnuser(NODE_J, "user-J");
+		break;
+
+	case NODE_E:
+		spawnuser(NODE_K, "user-K");
+		break;
+
+	case NODE_F:
+		spawnuser(NODE_L, "user-L");
+		break;
+
+	case NODE_G:
+		spawnuser(NODE_M, "user-M");
+		break;
+
+	case NODE_H:
+		spawnuser(NODE_N, "user-N");
+		break;
+
+	case NODE_I:
+		spawnuser(NODE_O, "user-O");
+		break;
+
+	default:
+		break;
+	}
+}
+
+/*------------------------------------------------------------------------
+ * usernode - create descendants, report readiness, then remain blocked
+ *------------------------------------------------------------------------
+ */
+local process usernode(uint32 node)
+{
+	nodepid[node] = getpid();
+	createchildren(node);
+	signal(created);
+	wait(hold);
+	return OK;
+}
+
+/*------------------------------------------------------------------------
+ * printproctree - print each active process and its active children
+ *------------------------------------------------------------------------
+ */
+local void printproctree(char *label)
+{
+	intmask mask;
+	pid32 pid;
+	pid32 child;
+
+	mask = disable();
+	kprintf("\n%s\n", label);
+	for (pid = 0; pid < NPROC; pid++) {
+		if (proctab[pid].prstate == PR_FREE) {
+			continue;
+		}
+
+		kprintf("P%d (%s):", pid, proctab[pid].prname);
+		for (child = 0; child < NPROC; child++) {
+			if ((proctab[child].prstate != PR_FREE) &&
+			    (proctab[child].prparent == pid)) {
+				kprintf(" %d", child);
+			}
+		}
+		kprintf("\n");
+	}
+	restore(mask);
+}
+
+/*------------------------------------------------------------------------
+ * main - run cascading-termination tests without creating the shell
+ *------------------------------------------------------------------------
+ */
+process main(void)
+{
+	int32 i;
+
+	created = semcreate(0);
+	hold = semcreate(0);
+	if (((int32)created == SYSERR) || ((int32)hold == SYSERR)) {
+		panic("main.kill: semaphore creation failed");
+		return SYSERR;
+	}
+
+	for (i = 0; i < NNODES; i++) {
+		nodepid[i] = SYSERR;
+	}
+
+	spawnuser(NODE_A, "user-A");
+
+	/* Wait until every user process has created its own children. */
+	for (i = 0; i < NNODES; i++) {
+		wait(created);
+	}
+
+	printproctree("Initial active process tree");
+
+	kprintf("\nKilling leaf user-O (P%d)\n", nodepid[NODE_O]);
+	kill(nodepid[NODE_O]);
+	printproctree("After killing leaf user-O");
+
+	kprintf("\nKilling parent user-B (P%d)\n", nodepid[NODE_B]);
+	kill(nodepid[NODE_B]);
+	printproctree("After killing parent user-B");
+
+	kprintf("\nKilling root user-A (P%d)\n", nodepid[NODE_A]);
+	kill(nodepid[NODE_A]);
+	printproctree("After killing root user-A");
+
+	/* Keep the system alive so the final process table remains visible. */
+	while (TRUE) {
+		sleepms(1000);
+	}
+
+	return OK;
+}

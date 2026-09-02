@@ -180,6 +180,7 @@ static	void	sysinit()
 		prptr->prname[0] = NULLCH;
 		prptr->prstkbase = NULL;
 		prptr->prprio = 0;
+		prptr->user_process = FALSE;
 	}
 
 	/* Initialize the Null process entry */	
@@ -187,6 +188,7 @@ static	void	sysinit()
 	prptr = &proctab[NULLPROC];
 	prptr->prstate = PR_CURR;
 	prptr->prprio = 0;
+	prptr->user_process = FALSE;
 	strncpy(prptr->prname, "prnull", 7);
 	prptr->prstkbase = getstk(NULLSTK);
 	prptr->prstklen = NULLSTK;

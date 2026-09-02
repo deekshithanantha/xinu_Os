@@ -13,12 +13,24 @@ syscall	kill(
 	intmask	mask;			/* Saved interrupt mask		*/
 	struct	procent *prptr;		/* Ptr to process's table entry	*/
 	int32	i;			/* Index into descriptors	*/
+	pid32   child;
 
 	mask = disable();
 	if (isbadpid(pid) || (pid == NULLPROC)
 	    || ((prptr = &proctab[pid])->prstate) == PR_FREE) {
 		restore(mask);
 		return SYSERR;
+	}
+
+	if(prptr->user_process == TRUE) {
+		for(child =0; child< NPROC; child++) {
+			if ((child != pid) && 
+			    (proctab[child].prstate != PR_FREE) && 
+				(proctab[child].prparent == pid) && 
+				(proctab[child].user_process == TRUE)) {
+				kill(child);
+			}
+		}
 	}
 
 	if (--prcount <= 1) {		/* Last user process completes	*/

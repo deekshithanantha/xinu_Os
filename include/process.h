@@ -51,6 +51,7 @@ struct procent {		/* Entry in the process table		*/
 	pid32	prparent;	/* ID of the creating process		*/
 	umsg32	prmsg;		/* Message sent to this process		*/
 	bool8	prhasmsg;	/* Nonzero iff msg is valid		*/
+	bool8   user_process; /*Default will be false, if user process will be True */
 	int16	prdesc[NDESC];	/* Device descriptors for process	*/
 };
 
