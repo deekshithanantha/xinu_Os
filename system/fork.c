@@ -2,7 +2,12 @@
 
 #include <xinu.h>
 
-local pid32 newforkpid(void);
+
+process fork_dummy(void)
+{
+	return OK;
+}
+
 
 /*------------------------------------------------------------------------
  * fork - create a child that resumes immediately after the fork call
@@ -68,7 +73,7 @@ pid32 fork(void)
 
 	// 2. create a new pid for the fork child
 
-	childspid = newforkpid();
+	childspid = create((void *)fork_dummy,parent_ptr->prstklen,parent_ptr->prprio,parent_ptr->prname,0);
 
 	if(childspid == SYSERR) {
 		restore(mask);
@@ -78,16 +83,10 @@ pid32 fork(void)
 	child_ptr = &proctab[childspid];
 
 
-	// 3. allocate a stack similar of the parent 
+	// 3. get the stack allocated by create()
 
 
-	child_base = (uint32 *)getstk(parent_ptr->prstklen);
-
-	if(child_base == (uint32 *)SYSERR) {
-		restore(mask);
-		return SYSERR;
-	}
-
+	child_base = (uint32 *)child_ptr->prstkbase;
 	parent_base = (uint32 *)parent_ptr->prstkbase;
 
 
@@ -102,7 +101,6 @@ pid32 fork(void)
 
 	if(((uint32)fork_ebp < (uint32)parent_low) || ((uint32)fork_ebp > (uint32)parent_base)) {
 
-		freestk((char *)child_base, parent_ptr->prstklen);
 		restore(mask);
 		return SYSERR;
 	}
@@ -113,7 +111,6 @@ pid32 fork(void)
 
 	if((parent_caller_ebp < (uint32)parent_low) || (parent_caller_ebp > (uint32)parent_base)) {
 
-		freestk((char *)child_base, parent_ptr->prstklen);
 		restore(mask);
 		return SYSERR;
 	}
@@ -144,8 +141,8 @@ pid32 fork(void)
 	/* Initialize process table entry for new fork process
 	 */
 
-
-	child_ptr->prstate = PR_SUSP;
+	
+	 child_ptr->prstate = PR_SUSP;
 	child_ptr->prprio = parent_ptr->prprio;
 	child_ptr->prstkbase = (char *)child_base;
 	child_ptr->prstklen = parent_ptr->prstklen;
@@ -184,9 +181,6 @@ pid32 fork(void)
 
 	if((uint32)child_ctxsw_frame < (uint32)child_low) {
 
-		freestk((char *)child_base,
-			parent_ptr->prstklen);
-
 		restore(mask);
 		return SYSERR;
 	}
@@ -207,7 +201,7 @@ pid32 fork(void)
 	child_ptr->prstkptr = (char *)child_ctxsw_frame;
 
 	// 10. process is ready
-	prcount++;
+
 	child_ptr->prstate = PR_READY;
 	insert(childspid, readylist, child_ptr->prprio);
 
@@ -217,27 +211,4 @@ pid32 fork(void)
 
 
 	return childspid;
-}
-
-/*------------------------------------------------------------------------
- * newforkpid - Obtain a new (free) process ID
- *------------------------------------------------------------------------
- */
-local pid32 newforkpid(void)
-{
-	uint32	i;			/* Iterate through all processes*/
-	static	pid32 nextpid = 1;	/* Position in table to try or	*/
-					/*   one beyond end of table	*/
-
-	/* Check all NPROC slots */
-
-	for (i = 0; i < NPROC; i++) {
-		nextpid %= NPROC;	/* Wrap around to beginning */
-		if (proctab[nextpid].prstate == PR_FREE) {
-			return nextpid++;
-		} else {
-			nextpid++;
-		}
-	}
-	return (pid32) SYSERR;
 }
