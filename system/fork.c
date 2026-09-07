@@ -2,50 +2,30 @@
 
 #include <xinu.h>
 
-local pid32 forkpid(void);
+local pid32 newforkpid(void);
 
 /*------------------------------------------------------------------------
  * fork - create a child that resumes immediately after the fork call
  *------------------------------------------------------------------------
  */
 
- /* create.c - create, newpid */
-
-#include <xinu.h>
-
-local	int newforkpid();
-
-/*------------------------------------------------------------------------
- *  create  -  Create a process to start running a function on x86
- *------------------------------------------------------------------------
- */
-pid32	fork(void)
+pid32 fork(void)
 {
-	//uint32		savsp, *pushsp;
-	//intmask 	mask;    	/* Interrupt mask		*/
-	//pid32		pid;		/* Stores new process id	*/
-	//struct	procent	*prptr;		/* Pointer to proc. table entry */
-	//int32		i;
-	//uint32		*a;		/* Points to list of args	*/
-	//uint32		*saddr;		/* Stack address		*/
-
-
 	//Define variables start here 
 	intmask mask;
 
 	pid32 parentspid;
 	pid32 childspid;
 
+	struct procent *parent_ptr;
+	struct procent *child_ptr;
 
-	struct	procent	*parent_ptr;
-	struct	procent	*child_ptr;
+	uint32 *parent_base;
+	uint32 *child_base;
 
-	uint32  parent_base;
-	uint32  child_base;
-
-    uint32 *parent_low;
-    uint32 *child_low;
-    int32 delta;
+	uint32 *parent_low;
+	uint32 *child_low;
+	int32 delta;
 
 	uint32 *fork_ebp;
 	uint32 *child_fork_ebp;
@@ -55,12 +35,15 @@ pid32	fork(void)
 	uint32 saved_edi;
 
 	uint32 parent_caller_ebp;
-    uint32 child_caller_ebp;
+	uint32 child_caller_ebp;
+
+	uint32 return_address;
 
 	uint32 data_to_move;
+	uint32 value;
 
 	uint32 *parent_space;
-    uint32 *child_space;
+	uint32 *child_space;
 	int32 transfer_pointer;
 
 	int32		i;
@@ -71,9 +54,9 @@ pid32	fork(void)
 	
 	
 	asm volatile("movl %%ebp, %0" : "=r"(fork_ebp));
-    asm volatile("movl %%ebx, %0" : "=r"(saved_ebx));
-    asm volatile("movl %%esi, %0" : "=r"(saved_esi));
-    asm volatile("movl %%edi, %0" : "=r"(saved_edi));
+	asm volatile("movl %%ebx, %0" : "=r"(saved_ebx));
+	asm volatile("movl %%esi, %0" : "=r"(saved_esi));
+	asm volatile("movl %%edi, %0" : "=r"(saved_edi));
 
 
 	mask = disable();
@@ -91,7 +74,7 @@ pid32	fork(void)
 		restore(mask);
 		return SYSERR;
 	}
-	prcount++;
+
 	child_ptr = &proctab[childspid];
 
 
@@ -99,57 +82,86 @@ pid32	fork(void)
 
 
 	child_base = (uint32 *)getstk(parent_ptr->prstklen);
+
+	if(child_base == (uint32 *)SYSERR) {
+		restore(mask);
+		return SYSERR;
+	}
+
 	parent_base = (uint32 *)parent_ptr->prstkbase;
+
 
 	// 4. calculate the reallocation amount to be moved
 
-	parent_low = (uint32 *)((uint32)parent_base - parent_ptr->prstklen + sizeof(uint32));				
-	child_low =  (uint32 *)((uint32)child_base - parent_ptr->prstklen + sizeof(uint32));
+	parent_low = (uint32 *)((uint32)parent_base - parent_ptr->prstklen + sizeof(uint32));
+	child_low = (uint32 *)((uint32)child_base - parent_ptr->prstklen + sizeof(uint32));
 
 	delta = (int32)((uint32)child_base - (uint32)parent_base);
-	
-	// 5. Copy stack and relocate addresses
+
+	// 5. get the callers EBP and return address
+
+	if(((uint32)fork_ebp < (uint32)parent_low) || ((uint32)fork_ebp > (uint32)parent_base)) {
+
+		freestk((char *)child_base, parent_ptr->prstklen);
+		restore(mask);
+		return SYSERR;
+	}
+
+	parent_caller_ebp = *fork_ebp;
+
+	return_address = *(fork_ebp + 1);
+
+	if((parent_caller_ebp < (uint32)parent_low) || (parent_caller_ebp > (uint32)parent_base)) {
+
+		freestk((char *)child_base, parent_ptr->prstklen);
+		restore(mask);
+		return SYSERR;
+	}
+
+
+	// 6. Copy stack and relocate addresses
 
 	data_to_move = parent_ptr->prstklen / sizeof(uint32);
 
 	parent_space = parent_low;
 	child_space  = child_low;
 
-	for (transfer_pointer = 0; transfer_pointer < data_to_move; transfer_pointer++) {
+	for(transfer_pointer = 0; transfer_pointer < data_to_move; transfer_pointer++) {
 
-	    uint32 value = parent_space[transfer_pointer];
+		value = parent_space[transfer_pointer];
 
-	    if ((value >= (uint32)parent_low) && (value <= (uint32)parent_base)) {
-	        //if it points to a value insise the satack displace it by delta
+		if ((value >= (uint32)parent_low) && (value <= (uint32)parent_base)) {
+			//if it points to a value insise the satack displace it by delta
 			child_space[transfer_pointer] = value + delta;
-	    }
-	    else {
-	        child_space[transfer_pointer] = value;
-	    }
+		}
+		else {
+			child_space[transfer_pointer] = value;
+		}
 	}
 
-	// 6. Initilize child PCB
+	// 7. Initilize child PCB
 
 	/* Initialize process table entry for new fork process
 	 */
-	
-	
-	child_ptr->prstate = PR_SUSP;	/* Initial state is suspended	*/
+
+
+	child_ptr->prstate = PR_SUSP;
 	child_ptr->prprio = parent_ptr->prprio;
 	child_ptr->prstkbase = (char *)child_base;
 	child_ptr->prstklen = parent_ptr->prstklen;
 
 	child_ptr->prname[PNMLEN-1] = NULLCH;
 
-	
-	for (i=0 ; i<PNMLEN-1; i++) {
+
+	for(i = 0; i < PNMLEN-1; i++) {
 		child_ptr->prname[i] = parent_ptr->prname[i];
 
 		if(parent_ptr->prname[i] ==  NULLCH) {
 			break;
 		}
 	}
-		;
+
+
 	child_ptr->prsem = -1;
 	child_ptr->prparent = parentspid;
 	child_ptr->prhasmsg = FALSE;
@@ -160,38 +172,46 @@ pid32	fork(void)
 	child_ptr->prdesc[1] = CONSOLE;
 	child_ptr->prdesc[2] = CONSOLE;
 
-	// 7. find the childs stack to EBP
+	// 8. find the childs stack EBP
 
-	child_fork_ebp = (uint32 *)((uint32)fork_ebp +delta);
+	child_fork_ebp = (uint32 *)((uint32)fork_ebp + delta);
 
-	child_caller_ebp = *fork_ebp + delta;
+	child_caller_ebp = parent_caller_ebp + delta;
 
-	//8. Construct Childs ctxsw  frame
+	// 9. Construct Childs ctxsw frame
 
-	child_ctxsw_frame  = child_caller_ebp - 9
+	child_ctxsw_frame = child_fork_ebp - 9;
+
+	if((uint32)child_ctxsw_frame < (uint32)child_low) {
+
+		freestk((char *)child_base,
+			parent_ptr->prstklen);
+
+		restore(mask);
+		return SYSERR;
+	}
 
 
-
- 	child_ctxsw_frame[0] = saved_edi;          /* %edi */
-    child_ctxsw_frame[1] = saved_esi;          /* %esi */
+	child_ctxsw_frame[0] = saved_edi;          /* %edi */
+	child_ctxsw_frame[1] = saved_esi;          /* %esi */
     child_ctxsw_frame[2] = child_caller_ebp;   /* %ebp (while finishing ctxsw)	*/
     child_ctxsw_frame[3] = 0;                  /* %esp; value filled in below	*/
-    child_ctxsw_frame[4] = saved_ebx;          /* %ebx */
-    child_ctxsw_frame[5] = 0;                  /* %edx */
-    child_ctxsw_frame[6] = 0;                  /* %ecx */
-    child_ctxsw_frame[7] = NPROC;              /* %eax */
-    child_ctxsw_frame[8] = (uint32)mask;       /* EFLAGS */
-    child_ctxsw_frame[9] = child_caller_ebp;
-    child_ctxsw_frame[10] = return_address;
+	child_ctxsw_frame[4] = saved_ebx;          /* %ebx */
+	child_ctxsw_frame[5] = 0;                  /* %edx */
+	child_ctxsw_frame[6] = 0;                  /* %ecx */
+	child_ctxsw_frame[7] = NPROC;              /* %eax */
+	child_ctxsw_frame[8] = (uint32)mask;       /* EFLAGS */
+	child_ctxsw_frame[9] = child_caller_ebp;
+	child_ctxsw_frame[10] = return_address;
 
-    child->prstkptr = (char *)child_ctxsw_frame;
+	child_ptr->prstkptr = (char *)child_ctxsw_frame;
 
-	//9. process is ready
+	// 10. process is ready
 	prcount++;
 	child_ptr->prstate = PR_READY;
 	insert(childspid, readylist, child_ptr->prprio);
 
-	//10. return back to parent
+	// 11. return back to parent
 
 	restore(mask);
 
@@ -200,10 +220,10 @@ pid32	fork(void)
 }
 
 /*------------------------------------------------------------------------
- *  newpid  -  Obtain a new (free) process ID
+ * newforkpid - Obtain a new (free) process ID
  *------------------------------------------------------------------------
  */
-local	pid32	newforkpid(void)
+local pid32 newforkpid(void)
 {
 	uint32	i;			/* Iterate through all processes*/
 	static	pid32 nextpid = 1;	/* Position in table to try or	*/
