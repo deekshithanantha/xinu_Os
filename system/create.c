@@ -2,7 +2,7 @@
 
 #include <xinu.h>
 
-local	int newpid();
+pid32	newpid(void);
 
 /*------------------------------------------------------------------------
  *  create  -  Create a process to start running a function on x86
@@ -102,7 +102,7 @@ pid32	create(
  *  newpid  -  Obtain a new (free) process ID
  *------------------------------------------------------------------------
  */
-local	pid32	newpid(void)
+pid32	newpid(void)
 {
 	uint32	i;			/* Iterate through all processes*/
 	static	pid32 nextpid = 1;	/* Position in table to try or	*/

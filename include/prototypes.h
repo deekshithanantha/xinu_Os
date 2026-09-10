@@ -43,6 +43,7 @@ extern	syscall	control(did32, int32, int32, int32);
 
 /* in file create.c */
 extern	pid32	create(void *, uint32, pri16, char *, uint32, ...);
+extern	pid32	newpid(void);
 
 /* in file fork.c */
 extern	pid32	fork(void);
